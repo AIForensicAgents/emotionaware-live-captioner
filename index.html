@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+<title>Emotion‑Aware Live Captioner</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        brand: { 50:'#f0f7ff', 100:'#e0efff', 200:'#b9dfff', 300:'#7cc4ff', 400:'#36a5ff', 500:'#0d8bf0', 600:'#006dcd', 700:'#0056a6', 800:'#024a89', 900:'#023e71' },
+        emotion: { happy:'#22c55e', sad:'#3b82f6', angry:'#ef4444', neutral:'#9ca3af', sarcastic:'#f59e0b', urgent:'#dc2626', skeptical:'#8b5cf6', excited:'#ec4899', calm:'#06b6d4' }
+      }
+    }
+  }
+}
+</script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+* { font-family: 'Inter', system-ui, sans-serif; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+.caption-enter { animation: slideUp 0.3s ease-out; }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pulse-ring { 0% { transform: scale(0.8); opacity: 1; } 100% { transform: scale(1.8); opacity: 0; } }
+.pulse-ring { animation: pulse-ring 1.5s cubic-bezier(0.215,0.61,0.355,1) infinite; }
+@keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+.breathe { animation: breathe 2s ease-in-out infinite; }
+.emotion-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.speaker-color-0 { border-left: 4px solid #0d8bf0; }
+.speaker-color-1 { border-left: 4px solid #22c55e; }
+.speaker-color-2 { border-left: 4px solid #f59e0b; }
+.speaker-color-3 { border-left: 4px solid #ec4899; }
+.speaker-color-4 { border-left: 4px solid #8b5cf6; }
+.verbosity-track::-webkit-slider-thumb { -webkit-appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #0d8bf0; cursor: pointer; border: 3px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.2); }
+.verbosity-track::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #b9dfff, #0d8bf0); }
+.verbosity-track { -webkit-appearance: none; width: 100%; }
+.nonverbal-tag { display: inline-flex; align-items: center; gap: 3px; background: #fef3c7; color: #92400e; padding: 1px 6px; border-radius: 6px; font-size: 0.65rem; font-weight: 500; font-style: italic; }
+body { overscroll-behavior: none; }
+.high-contrast .caption-block { font-size: 1.25rem !important; line-height: 1.8 !important; }
+.high-contrast .emotion-badge { font-size: 0.85rem !important; padding: 3px 10px !important; }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<div id="app" class="max-w-lg mx-auto min-h-screen flex flex-col bg-white shadow-xl">
+  <!-- Header -->
+  <header class="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-100 px-4 py-3">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center">
+          <span class="text-white text-lg">👂</span>
+        </div>
+        <div>
+          <h1 class="text-base font-bold text-gray-900 leading-tight">Emotion Captioner</h1>
+          <p class="text-[10px] text-gray-400 font-medium" id="statusText">Ready to listen</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="toggleSettings()" class="w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors" aria-label="Settings">
+          <span class="text-lg">⚙️</span>
+        </button>
+        <button onclick="exportTranscript()" class="w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors" aria-label="Export" id="exportBtn" style="display:none;">
+          <span class="text-lg">📋</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Onboarding -->
+  <div id="onboarding" class="flex-1 flex flex-col items-center justify-center px-6 py-8 text-center">
+    <div class="w-20 h-20 rounded-full bg-brand-100 flex items-center justify-center mb-6 breathe">
+      <span class="text-4xl">🎙️</span>
+    </div>
+    <h2 class="text-2xl font-bold text-gray-900 mb-3">Read the Room, Fully 🌟</h2>
+    <p class="text-gray-500 text-sm mb-6 max-w-xs leading-relaxed">
+      Real‑time captions enriched with <strong>speaker labels</strong>, <strong>emotion tags</strong>, and <strong>nonverbal cues</strong> — so you never miss a beat.
+    </p>
+    <div class="space-y-3 w-full max-w-xs mb-8">
+      <div class="flex items-center gap-3 text-left bg-brand-50 rounded-xl p-3">
+        <span class="text-xl">🗣️</span>
+        <span class="text-sm text-gray-700">Speaker identification & labels</span>
+      </div>
+      <div class="flex items-center gap-3 text-left bg-green-50 rounded-xl p-3">
+        <span class="text-xl">💭</span>
+        <span class="text-sm text-gray-700">Emotion & tone detection</span>
+      </div>
+      <div class="flex items-center gap-3 text-left bg-amber-50 rounded-xl p-3">
+        <span class="text-xl">👏</span>
+        <span class="text-sm text-gray-700">Nonverbal cue summaries</span>
+      </div>
+    </div>
+    <button onclick="startListening()" class="w-full max-w-xs h-14 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-600 text-white font-semibold text-base shadow-lg shadow-brand-200 hover:shadow-xl transition-all active:scale-95">
+      🎤 Start Captioning
+    </button>
+    <p class="text-[11px] text-gray-400 mt-3">Microphone access required · All processing uses AI</p>
+  </div>
+
+  <!-- Live Captioning View -->
+  <div id="liveView" class="flex-1 flex flex-col" style="display:none;">
+    <!-- Live indicator -->
+    <div class="px-4 py-2 flex items-center justify-between bg-gray-50">
+      <div class="flex items-center gap-2">
+        <div class="relative">
+          <div class="w-3 h-3 rounded-full bg-red-500"></div>
+          <div class="absolute inset-0 w-3 h-3 rounded-full bg-red-500 pulse-ring"></div>
+        </div>
+        <span class="text-xs font-semibold text-red-600" id="liveLabel">LIVE</span>
+        <span class="text-xs text-gray-400" id="durationLabel">00:00</span>
+      </div>
+      <div class="flex items-center gap-1">
+        <span class="text-[10px] text-gray-400" id="speakerCount">0 speakers</span>
+      </div>
+    </div>
+
+    <!-- Captions area -->
+    <div id="captionsArea" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 scroll-smooth" style="max-height: calc(100vh - 220px);">
+      <div class="text-center py-8 text-gray-300" id="emptyState">
+        <span class="text-3xl block mb-2">🎧</span>
+        <p class="text-sm">Listening… speak to see enriched captions</p>
+      </div>
+    </div>
+
+    <!-- Bottom controls -->
+    <div class="sticky bottom-0 bg-white border-t border-gray-100 px-4 py-3 safe-area-bottom">
+      <div class="flex items-center gap-3">
+        <button onclick="toggleListening()" id="micBtn" class="w-14 h-14 rounded-2xl bg-red-500 text-white flex items-center justify-center shadow-lg active:scale-95 transition-all flex-shrink-0">
+          <span class="text-2xl" id="micIcon">⏸️</span>
+        </button>
+        <div class="flex-1 flex flex-col gap-1">
+          <div class="flex items-center justify-between">
+            <label class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Verbosity</label>
+            <span class="text-[10px] text-gray-400" id="verbosityLabel">Balanced</span>
+          </div>
+          <input type="range" min="1" max="3" value="2" class="verbosity-track" id="verbositySlider" oninput="updateVerbosity(this.value)" aria-label="Verbosity level">
+          <div class="flex justify-between text-[9px] text-gray-400">
+            <span>Minimal</span>
+            <span>Balanced</span>
+            <span>Detailed</span>
+          </div>
+        </div>
+        <button onclick="clearSession()" class="w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 flex items-center justify-center transition-colors flex-shrink-0" aria-label="Clear">
+          <span>🗑️</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Panel -->
+  <div id="settingsPanel" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" style="display:none;" onclick="toggleSettings()">
+    <div class="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-white rounded-t-3xl p-6 shadow-2xl" onclick="event.stopPropagation()">
+      <div class="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-6"></div>
+      <h3 class="text-lg font-bold text-gray-900 mb-4">⚙️ Settings</h3>
+      
+      <div class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-800">High Contrast Mode</p>
+            <p class="text-xs text-gray-400">Larger text & bolder badges</p>
+          </div>
+          <button onclick="toggleHighContrast()" id="hcToggle" class="w-12 h-7 rounded-full bg-gray-300 relative transition-colors" aria-label="Toggle high contrast">
+            <div id="hcDot" class="w-5 h-5 rounded-full bg-white shadow absolute top-1 left-1 transition-all"></div>
+          </button>
+        </div>
+        
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-800">Show Confidence Scores</p>
+            <p class="text-xs text-gray-400">Display AI confidence %</p>
+          </div>
+          <button onclick="toggleConfidence()" id="confToggle" class="w-12 h-7 rounded-full bg-gray-300 relative transition-colors" aria-label="Toggle confidence">
+            <div id="confDot" class="w-5 h-5 rounded-full bg-white shadow absolute top-1 left-1 transition-all"></div>
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-800">Auto-scroll Captions</p>
+            <p class="text-xs text-gray-400">Stay at latest caption</p>
+          </div>
+          <button onclick="toggleAutoScroll()" id="scrollToggle" class="w-12 h-7 rounded-full bg-brand-500 relative transition-colors" aria-label="Toggle auto-scroll">
+            <div id="scrollDot" class="w-5 h-5 rounded-full bg-white shadow absolute top-1 right-1 transition-all"></div>
+          </button>
+        </div>
+
+        <div>
+          <p class="text-sm font-medium text-gray-800 mb-2">Preset Mode</p>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="setPreset('meeting')" id="presetMeeting" class="h-11 rounded-xl border-2 border-gray-200 text-sm font-medium text-gray-600 hover:border-brand-400 transition-colors">📊 Meeting</button>
+            <button onclick="setPreset('social')" id="presetSocial" class="h-11 rounded-xl border-2 border-gray-200 text-sm font-medium text-gray-600 hover:border-brand-400 transition-colors">☕ Social</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-4 border-t border-gray-100">
+        <p class="text-[10px] text-gray-400 text-center">AI Tokens Used: <span id="tokenCount">0</span> · Processing Time: <span id="timeCount">0s</span></p>
+      </div>
+      
+      <button onclick="toggleSettings()" class="w-full h-12 mt-4 rounded-xl bg-gray-100 text-gray-700 font-medium active:scale-95 transition-all">Close</button>
+    </div>
+  </div>
+
+  <!-- Export Panel -->
+  <div id="exportPanel" class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" style="display:none;" onclick="closeExport()">
+    <div class="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-white rounded-t-3xl p-6 shadow-2xl max-h-[80vh] overflow-y-auto" onclick="event.stopPropagation()">
+      <div class="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4"></div>
+      <h3 class="text-lg font-bold text-gray-900 mb-2">📋 Meeting Summary</h3>
+      <div id="exportContent" class="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 rounded-xl p-4 mb-4 max-h-60 overflow-y-auto"></div>
+      <div id="aiSummary" class="mb-4" style="display:none;">
+        <h4 class="text-sm font-semibold text-gray-800 mb-2">🤖 AI Summary</h4>
+        <div id="aiSummaryContent" class="text-sm text-gray-700 bg-brand-50 rounded-xl p-4"></div>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="copyTranscript()" class="flex-1 h-12 rounded-xl bg-brand-500 text-white font-medium active:scale-95 transition-all">📋 Copy</button>
+        <button onclick="downloadTranscript()" class="flex-1 h-12 rounded-xl bg-gray-100 text-gray-700 font-medium active:scale-95 transition-all">⬇️ Download</button>
+      </div>
+      <button onclick="generateAISummary()" id="genSummaryBtn" class="w-full h-12 mt-2 rounded-xl bg-gradient-to-r from-brand-500 to-brand-600 text-white font-medium active:scale-95 transition-all">✨ Generate AI Summary</button>
+      <button onclick="closeExport()" class="w-full h-12 mt-2 rounded-xl bg-gray-100 text-gray-700 font-medium active:scale-95 transition-all">Close</button>
+    </div>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loadingOverlay" class="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center" style="display:none;">
+    <div class="bg-white rounded-2xl p-6 text-center shadow-2xl max-w-xs mx-4">
+      <div class="w-10 h-10 border-4 border-brand-200 border-t-brand-500 rounded-full animate-spin mx-auto mb-3"></div>
+      <p class="text-sm font-medium text-gray-700" id="loadingText">Processing...</p>
+    </div>
+  </div>
+
+  <!-- Error toast -->
+  <div id="errorToast" class="fixed top-4 left-4 right-4 max-w-lg mx-auto z-[70] bg-red-50 border border-red-200 rounded-xl p-4 shadow-lg" style="display:none;">
+    <div class="flex items-start gap-3">
+      <span class="text-xl">⚠️</span>
+      <div class="flex-1">
+        <p class="text-sm font-medium text-red-800" id="errorText"></p>
+        <button onclick="hideError()" class="text-xs text-red-600 underline mt-1">Dismiss</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== Global State =====
+let isListening = false;
+let isPaused = false;
+let recognition = null;
+let captions = [];
+let speakers = {};
+let speakerCounter = 0;
+let sessionStartTime = null;
+let durationInterval = null;
+let settings = {
+  highContrast: false,
+  showConfidence: false,
+  autoScroll: true,
+  verbosity: 2,
+  preset: 'meeting'
+};
+
+// AI tracking globals
+let totalAIInputTokens = 0;
+let totalAIOutputTokens = 0;
+let totalAITime = 0;
+let aiTimeByAlias = {};
+
+// Load persisted data
+function loadState() {
+  try {
+    const saved = localStorage.getItem('emotionCaptioner_settings');
+    if (saved) settings = { ...settings, ...JSON.parse(saved) };
+    const savedCaptions = localStorage.getItem('emotionCaptioner_captions');
+    if (savedCaptions) captions = JSON.parse(savedCaptions);
+    const savedSpeakers = localStorage.getItem('emotionCaptioner_speakers');
+    if (savedSpeakers) {
+      speakers = JSON.parse(savedSpeakers);
+      speakerCounter = Object.keys(speakers).length;
+    }
+  } catch(e) {}
+  applySettings();
+}
+
+function saveState() {
+  try {
+    localStorage.setItem('emotionCaptioner_settings', JSON.stringify(settings));
+    localStorage.setItem('emotionCaptioner_captions', JSON.stringify(captions));
+    localStorage.setItem('emotionCaptioner_speakers', JSON.stringify(speakers));
+  } catch(e) {}
+}
+
+// ===== AI API =====
+async function callAI(alias, params, retries = 3) {
+  const start = Date.now();
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const resp = await fetch('https://16504442930.work/run_prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alias, params })
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        if (attempt < retries - 1) continue;
+        throw new Error(`API error ${resp.status}: ${text}`);
+      }
+      const data = await resp.json();
+      const elapsed = Date.now() - start;
+      totalAITime += elapsed;
+      aiTimeByAlias[alias] = (aiTimeByAlias[alias] || 0) + elapsed;
+      if (data.input_tokens) totalAIInputTokens += data.input_tokens;
+      if (data.output_tokens) totalAIOutputTokens += data.output_tokens;
+      updateTokenDisplay();
+      return data;
+    } catch (e) {
+      if (attempt < retries - 1) continue;
+      // Use AI to make error friendly
+      let friendlyMsg = e.message;
+      try {
+        const errResp = await fetch('https://16504442930.work/run_prompt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            alias: 'genericAI',
+            params: {
+              prompt: `Reformat this error message to be user-friendly and empowering, helping the user fix it. Include the full original error. Return JSON with key "message" as a string. Error: ${e.message}`
+            }
+          })
+        });
+        if (errResp.ok) {
+          const errData = await errResp.json();
+          friendlyMsg = errData.message || e.message;
+        }
+      } catch(_) {}
+      throw new Error(friendlyMsg);
+    }
+  }
+}
+
+function updateTokenDisplay() {
+  const tc = document.getElementById('tokenCount');
+  const tmc = document.getElementById('timeCount');
+  if (tc) tc.textContent = (totalAIInputTokens + totalAIOutputTokens).toLocaleString();
+  if (tmc) tmc.textContent = (totalAITime / 1000).toFixed(1) + 's';
+}
+
+// ===== Speech Recognition =====
+function initRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showError('Speech Recognition is not supported in your browser. Please use Chrome, Edge, or Safari.');
+    return false;
+  }
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+  recognition.maxAlternatives = 1;
+
+  let interimText = '';
+  let finalBuffer = '';
+  let silenceTimer = null;
+  let lastSpeechTime = Date.now();
+
+  recognition.onresult = (event) => {
+    let interim = '';
+    let final = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        final += transcript;
+      } else {
+        interim += transcript;
+      }
+    }
+    
+    lastSpeechTime = Date.now();
+    
+    if (final.trim()) {
+      processCaption(final.trim());
+    }
+    
+    // Show interim
+    updateInterim(interim);
+  };
+
+  recognition.onend = () => {
+    if (isListening && !isPaused) {
+      try { recognition.start(); } catch(e) {}
+    }
+  };
+
+  recognition.onerror = (event) => {
+    if (event.error === 'no-speech') return;
+    if (event.error === 'not-allowed') {
+      showError('Microphone access denied. Please allow microphone access in your browser settings and try again.');
+      stopListening();
+      return;
+    }
+    console.log('Speech error:', event.error);
+  };
+
+  return true;
+}
+
+let processingQueue = [];
+let isProcessing = false;
+
+async function processCaption(text) {
+  const timestamp = new Date().toISOString();
+  const elapsed = sessionStartTime ? Math.floor((Date.now() - sessionStartTime) / 1000) : 0;
+  
+  // Add basic caption immediately
+  const captionId = Date.now();
+  const basicCaption = {
+    id: captionId,
+    text: text,
+    timestamp: timestamp,
+    elapsed: elapsed,
+    speaker: null,
+    emotion: null,
+    tone: null,
+    nonverbal: null,
+    confidence: null,
+    enriched: false
+  };
+  
+  captions.push(basicCaption);
+  renderCaption(basicCaption);
+  saveState();
+  
+  // Queue AI enrichment
+  enrichCaption(captionId, text, elapsed);
+}
+
+async function enrichCaption(captionId, text, elapsed) {
+  const verbosity = settings.verbosity;
+  const verbosityDesc = verbosity === 1 ? 'minimal - only add emotion if very clear' : verbosity === 2 ? 'balanced - include likely emotions and notable nonverbal cues' : 'detailed - include nuanced emotions, tone, confidence, and all possible nonverbal observations';
+  
+  const contextTexts = captions.slice(-5).map(c => c.text).join(' | ');
+  
+  const prompt = `You are an emotion-aware captioning system helping hearing-impaired users understand social context in conversations.
+
+Analyze this spoken text and provide enrichment data.
+
+Spoken text: "${text}"
+Recent context: "${contextTexts}"
+Time in conversation: ${elapsed} seconds
+Verbosity level: ${verbosityDesc}
+
+Based on linguistic cues, word choice, punctuation patterns, and context, determine:
+
+1. Speaker: Assign a speaker label. If the tone/style seems different from previous context, it might be a different speaker. Use "Speaker A", "Speaker B" etc. If uncertain, use "Speaker A".
+2. Emotion: The primary emotion detected (one of: happy, sad, angry, neutral, sarcastic, urgent, skeptical, excited, calm, confused, frustrated, amused, concerned, confident, hesitant)
+3. Tone: A brief tone descriptor (e.g., "formal", "casual", "assertive", "questioning", "encouraging", "dismissive")
+4. Nonverbal cues: Any implied nonverbal events based on context (e.g., "[laughter]", "[pause]", "[emphasis]", "[applause]", "[sigh]", null if none apparent)
+5. Confidence: Your confidence in the emotion detection as a number from 0.0 to 1.0
+
+Return EXACTLY this JSON format with no additional text:
+{
+  "speaker": string (e.g. "Speaker A"),
+  "emotion": string (one of the listed emotions),
+  "tone": string (brief descriptor),
+  "nonverbal": string or null (bracketed description or null),
+  "confidence": number (0.0-1.0)
+}`;
+
+  try {
+    const result = await callAI('genericAI', { prompt });
+    const caption = captions.find(c => c.id === captionId);
+    if (caption && result) {
+      caption.speaker = result.speaker || 'Speaker A';
+      caption.emotion = result.emotion || 'neutral';
+      caption.tone = result.tone || '';
+      caption.nonverbal = result.nonverbal || null;
+      caption.confidence = typeof result.confidence === 'number' ? result.confidence : 0.5;
+      caption.enriched = true;
+      
+      // Track speaker
+      if (!speakers[caption.speaker]) {
+        speakers[caption.speaker] = { color: speakerCounter % 5, count: 0 };
+        speakerCounter++;
+      }
+      speakers[caption.speaker].count++;
+      
+      updateCaptionElement(caption);
+      updateSpeakerCount();
+      saveState();
+    }
+  } catch (e) {
+    console.error('Enrichment error:', e);
+    // Still show the basic caption, just without enrichment
+  }
+}
+
+function renderCaption(caption) {
+  const emptyState = document.getElementById('emptyState');
+  if (emptyState) emptyState.style.display = 'none';
+  document.getElementById('exportBtn').style.display = 'flex';
+  
+  const area = document.getElementById('captionsArea');
+  const el = document.createElement('div');
+  el.id = `caption-${caption.id}`;
+  el.className = 'caption-block caption-enter bg-gray-50 rounded-xl p-3 speaker-color-0';
+  
+  const time = formatElapsed(caption.elapsed);
+  el.innerHTML = `
+    <div class="flex items-center gap-2 mb-1">
+      <span class="text-[10px] text-gray-400 font-mono">${time}</span>
+      <span class="text-xs font-medium text-gray-500 speaker-label">...</span>
+      <div class="emotion-container flex items-center gap-1 flex-wrap"></div>
+    </div>
+    <p class="text-sm text-gray-800 leading-relaxed caption-text">${escapeHtml(caption.text)}</p>
+    <div class="nonverbal-container mt-1"></div>
+  `;
+  
+  area.appendChild(el);
+  if (settings.autoScroll) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+}
+
+function updateCaptionElement(caption) {
+  const el = document.getElementById(`caption-${caption.id}`);
+  if (!el) return;
+  
+  const colorIdx = speakers[caption.speaker]?.color || 0;
+  el.className = `caption-block caption-enter bg-gray-50 rounded-xl p-3 speaker-color-${colorIdx}`;
+  
+  // Speaker label
+  const label = el.querySelector('.speaker-label');
+  if (label) {
+    label.textContent = caption.speaker;
+    label.style.color = getSpeakerColor(colorIdx);
+  }
+  
+  // Emotion badge
+  const emotionContainer = el.querySelector('.emotion-container');
+  if (emotionContainer && caption.emotion) {
+    let badgeHtml = `<span class="emotion-badge" style="background:${getEmotionBg(caption.emotion)};color:${getEmotionColor(caption.emotion)}">${getEmotionEmoji(caption.emotion)} ${caption.emotion}</span>`;
+    if (caption.tone && settings.verbosity >= 2) {
+      badgeHtml += `<span class="text-[10px] text-gray-400">${caption.tone}</span>`;
+    }
+    if (settings.showConfidence && caption.confidence != null) {
+      badgeHtml += `<span class="text-[9px] text-gray-400 bg-gray-200 rounded px-1">${Math.round(caption.confidence * 100)}%</span>`;
+    }
+    emotionContainer.innerHTML = badgeHtml;
+  }
+  
+  // Nonverbal
+  const nvContainer = el.querySelector('.nonverbal-container');
+  if (nvContainer && caption.nonverbal && settings.verbosity >= 2) {
+    nvContainer.innerHTML = `<span class="nonverbal-tag">👀 ${escapeHtml(caption.nonverbal)}</span>`;
+  }
+  
+  if (settings.autoScroll) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+}
+
+let interimEl = null;
+function updateInterim(text) {
+  if (!text.trim()) {
+    if (interimEl) { interimEl.remove(); interimEl = null; }
+    return;
+  }
+  const area = document.getElementById('captionsArea');
+  if (!interimEl) {
+    interimEl = document.createElement('div');
+    interimEl.className = 'bg-white rounded-xl p-3 border border-dashed border-gray-200 opacity-60';
+    interimEl.id = 'interimCaption';
+  }
+  interimEl.innerHTML = `<p class="text-sm text-gray-500 italic">${escapeHtml(text)}...</p>`;
+  if (!document.getElementById('interimCaption')) {
+    area.appendChild(interimEl);
+  }
+  if (settings.autoScroll) {
+    interimEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }
+}
+
+// ===== Controls =====
+function startListening() {
+  if (!initRecognition()) return;
+  
+  isListening = true;
+  isPaused = false;
+  sessionStartTime = Date.now();
+  
+  try {
+    recognition.start();
+  } catch(e) {
+    showError('Could not start microphone. Please check permissions.');
+    return;
+  }
+  
+  document.getElementById('onboarding').style.display = 'none';
+  document.getElementById('liveView').style.display = 'flex';
+  document.getElementById('statusText').textContent = '🔴 Live captioning';
+  
+  // Restore previous captions if any
+  if (captions.length > 0) {
+    const area = document.getElementById('captionsArea');
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('exportBtn').style.display = 'flex';
+    captions.forEach(c => {
+      renderCaption(c);
+      if (c.enriched) updateCaptionElement(c);
+    });
+  }
+  
+  startDurationTimer();
+  updateVerbosity(settings.verbosity);
+  updateSpeakerCount();
+}
+
+function toggleListening() {
+  if (isPaused) {
+    isPaused = false;
+    try { recognition.start(); } catch(e) {}
+    document.getElementById('micBtn').className = 'w-14 h-14 rounded-2xl bg-red-500 text-white flex items-center justify-center shadow-lg active:scale-95 transition-all flex-shrink-0';
+    document.getElementById('micIcon').textContent = '⏸️';
+    document.getElementById('liveLabel').textContent = 'LIVE';
+    document.getElementById('statusText').textContent = '🔴 Live captioning';
+  } else {
+    isPaused = true;
+    try { recognition.stop(); } catch(e) {}
+    document.getElementById('micBtn').className = 'w-14 h-14 rounded-2xl bg-brand-500 text-white flex items-center justify-center shadow-lg active:scale-95 transition-all flex-shrink-0';
+    document.getElementById('micIcon').textContent = '▶️';
+    document.getElementById('liveLabel').textContent = 'PAUSED';
+    document.getElementById('statusText').textContent = '⏸️ Paused';
+  }
+}
+
+function stopListening() {
+  isListening = false;
+  isPaused = false;
+  try { recognition.stop(); } catch(e) {}
+  if (durationInterval) clearInterval(durationInterval);
+  document.getElementById('statusText').textContent = 'Session ended';
+}
+
+function clearSession() {
+  if (!confirm('Clear all captions from this session?')) return;
+  captions = [];
+  speakers = {};
+  speakerCounter = 0;
+  saveState();
+  const area = document.getElementById('captionsArea');
+  area.innerHTML = `<div class="text-center py-8 text-gray-300" id="emptyState">
+    <span class="text-3xl block mb-2">🎧</span>
+    <p class="text-sm">Listening… speak to see enriched captions</p>
+  </div>`;
+  document.getElementById('exportBtn').style.display = 'none';
+  updateSpeakerCount();
+}
+
+function startDurationTimer() {
+  if (durationInterval) clearInterval(durationInterval);
+  durationInterval = setInterval(() => {
+    if (sessionStartTime && !isPaused) {
+      const elapsed = Math.floor((Date.now() - sessionStartTime) / 1000);
+      document.getElementById('durationLabel').textContent = formatElapsed(elapsed);
+    }
+  }, 1000);
+}
+
+// ===== Settings =====
+function toggleSettings() {
+  const panel = document.getElementById('settingsPanel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  applySettingsUI();
+}
+
+function toggleHighContrast() {
+  settings.highContrast = !settings.highContrast;
+  applySettings();
+  saveState();
+  applySettingsUI();
+}
+
+function toggleConfidence() {
+  settings.showConfidence = !settings.showConfidence;
+  saveState();
+  applySettingsUI();
+  // Re-render enriched captions
+  captions.filter(c => c.enriched).forEach(c => updateCaptionElement(c));
+}
+
+function toggleAutoScroll() {
+  settings.autoScroll = !settings.autoScroll;
+  saveState();
+  applySettingsUI();
+}
+
+function updateVerbosity(val) {
+  settings.verbosity = parseInt(val);
+  const labels = { 1: 'Minimal', 2: 'Balanced', 3: 'Detailed' };
+  document.getElementById('verbosityLabel').textContent = labels[settings.verbosity];
+  document.getElementById('verbositySlider').value = settings.verbosity;
+  saveState();
+  // Re-render
+  captions.filter(c => c.enriched).forEach(c => updateCaptionElement(c));
+}
+
+function setPreset(preset) {
+  settings.preset = preset;
+  if (preset === 'meeting') {
+    settings.verbosity = 2;
+    settings.showConfidence = true;
+  } else {
+    settings.verbosity = 3;
+    settings.showConfidence = false;
+  }
+  updateVerbosity(settings.verbosity);
+  saveState();
+  applySettingsUI();
+  captions.filter(c => c.enriched).forEach(c => updateCaptionElement(c));
+}
+
+function applySettings() {
+  if (settings.highContrast) {
+    document.body.classList.add('high-contrast');
+  } else {
+    document.body.classList.remove('high-contrast');
+  }
+}
+
+function applySettingsUI() {
+  // High contrast toggle
+  const hcToggle = document.getElementById('hcToggle');
+  const hcDot = document.getElementById('hcDot');
+  if (settings.highContrast) {
+    hcToggle.className = 'w-12 h-7 rounded-full bg-brand-500 relative transition-colors';
+    hcDot.className = 'w-5 h-5 rounded-full bg-white shadow absolute top-1 right-1 transition-all';
+  } else {
+    hcToggle.className = 'w-12 h-7 rounded-full bg-gray-300 relative transition-colors';
+    hcDot.className = 'w-5 h-5 rounded-full bg-white shadow absolute top-1 left-1 transition-all';
+  }
+  
+  // Confidence toggle
+  const confToggle = document.getElementById('confToggle');
+  const confDot = document.getElementById('confDot');
+  if (settings.showConfidence) {
+    confToggle.className = 'w-12 h-7 rounded-full bg-brand-500 relative transition-colors';
+    confDot.className = 'w-5 h-5 rounded-full bg-white shadow absolute top-1 right-1 transition-all';
+  } else {
+    confToggle.className = 'w-12 h-7 rounded-full bg-gray-300 relative transition-colors';
+    confDot.className = 'w-5 h-5 rounded-full bg-white shadow absolute top-1 left-1 transition-all';
+  }
+  
+  // Auto-scroll toggle
+  const scrollToggle = document.getElementById('scrollToggle');
+  const scrollDot = document.getElementById('scrollDot');
+  if (settings.autoScroll) {
+    scrollToggle.className = 'w-12 h-7 rounded-full bg-brand-500 relative transition-colors';
+    scrollDot.className = 'w-5 h-5 rounded-full bg-white shadow absolute top-1 right-1 transition-all';
+  } else {
+    scrollToggle.className = 'w-12 h-7 rounded-full bg-gray-300 relative transition-colors';
+    scrollDot.className = 'w-5 h-5 rounded-full bg-white shadow absolute top-1 left-1 transition-all';
+  }
+  
+  // Presets
+  document.getElementById('presetMeeting').className = `h-11 rounded-xl border-2 text-sm font-medium transition-colors ${settings.preset === 'meeting' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-200 text-gray-600 hover:border-brand-400'}`;
+  document.getElementById('presetSocial').className = `h-11 rounded-xl border-2 text-sm font-medium transition-colors ${settings.preset === 'social' ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-200 text-gray-600 hover:border-brand-400'}`;
+}
+
+// ===== Export =====
+function exportTranscript() {
+  if (captions.length === 0) {
+    showError('No captions to export yet. Start speaking first!');
+    return;
+  }
+  
+  const content = captions.map(c => {
+    const time = formatElapsed(c.elapsed);
+    const speaker = c.speaker || 'Unknown';
+    const emotion = c.emotion ? ` [${c.emotion}]` : '';
+    const nv = c.nonverbal ? ` ${c.nonverbal}` : '';
+    return `[${time}] ${speaker}${emotion}: ${c.text}${nv}`;
+  }).join('\n');
+  
+  document.getElementById('exportContent').textContent = content;
+  document.getElementById('aiSummary').style.display = 'none';
+  document.getElementById('exportPanel').style.display = 'block';
+}
+
+function closeExport() {
+  document.getElementById('exportPanel').style.display = 'none';
+}
+
+function copyTranscript() {
+  const content = document.getElementById('exportContent').textContent;
+  const aiContent = document.getElementById('aiSummaryContent').textContent;
+  const full = content + (aiContent ? '\n\n--- AI Summary ---\n' + aiContent : '');
+  navigator.clipboard.writeText(full).then(() => {
+    showToast('Copied to clipboard! 📋');
+  });
+}
+
+function downloadTranscript() {
+  const content = document.getElementById('exportContent').textContent;
+  const aiContent = document.getElementById('aiSummaryContent').textContent;
+  const full = content + (aiContent ? '\n\n--- AI Summary ---\n' + aiContent : '');
+  const blob = new Blob([full], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `caption-export-${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function generateAISummary() {
+  const btn = document.getElementById('genSummaryBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  
+  const transcriptText = captions.map(c => {
+    const speaker = c.speaker || 'Unknown';
+    const emotion = c.emotion ? ` [${c.emotion}]` : '';
+    return `${speaker}${emotion}: ${c.text}`;
+  }).join('\n');
+  
+  try {
+    const result = await callAI('genericAI', {
+      prompt: `You are a meeting/conversation summarizer for hearing-impaired users. Summarize the following transcript, highlighting:
+1. Key topics discussed
+2. Important decisions or action items
+3. Notable emotional moments or shifts in tone
+4. Speaker participation summary
+
+Transcript:
+${transcriptText}
+
+Return EXACTLY this JSON format:
+{
+  "summary": string (a well-structured 2-4 paragraph summary),
+  "keyTopics": string[] (array of 3-5 key topic strings),
+  "actionItems": string[] (array of action item strings, can be empty),
+  "emotionTimeline": string (a brief narrative of how emotions shifted throughout)
+}`
+    });
+    
+    let html = '';
+    if (result.summary) html += `<p class="mb-2">${escapeHtml(result.summary)}</p>`;
+    if (result.keyTopics?.length) {
+      html += `<p class="font-semibold mt-2 mb-1">📌 Key Topics:</p><ul class="list-disc pl-5 mb-2">`;
+      result.keyTopics.forEach(t => html += `<li>${escapeHtml(t)}</li>`);
+      html += '</ul>';
+    }
+    if (result.actionItems?.length) {
+      html += `<p class="font-semibold mt-2 mb-1">✅ Action Items:</p><ul class="list-disc pl-5 mb-2">`;
+      result.actionItems.forEach(t => html += `<li>${escapeHtml(t)}</li>`);
+      html += '</ul>';
+    }
+    if (result.emotionTimeline) {
+      html += `<p class="font-semibold mt-2 mb-1">💭 Emotion Timeline:</p><p>${escapeHtml(result.emotionTimeline)}</p>`;
+    }
+    
+    document.getElementById('aiSummaryContent').innerHTML = html;
+    document.getElementById('aiSummary').style.display = 'block';
+  } catch(e) {
+    showError(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✨ Generate AI Summary';
+  }
+}
+
+// ===== Helpers =====
+function formatElapsed(seconds) {
+  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const s = (seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function getSpeakerColor(idx) {
+  const colors = ['#0d8bf0', '#22c55e', '#f59e0b', '#ec4899', '#8b5cf6'];
+  return colors[idx % colors.length];
+}
+
+function getEmotionEmoji(emotion) {
+  const map = {
+    happy: '😊', sad: '😢', angry: '😠', neutral: '😐', sarcastic: '😏',
+    urgent: '🚨', skeptical: '🤨', excited: '🤩', calm: '😌', confused: '😕',
+    frustrated: '😤', amused: '😄', concerned: '😟', confident: '💪', hesitant: '🤔'
+  };
+  return map[emotion] || '💬';
+}
+
+function getEmotionBg(emotion) {
+  const map = {
+    happy: '#dcfce7', sad: '#dbeafe', angry: '#fecaca', neutral: '#f3f4f6',
+    sarcastic: '#fef3c7', urgent: '#fecaca', skeptical: '#ede9fe', excited: '#fce7f3',
+    calm: '#cffafe', confused: '#fef3c7', frustrated: '#fed7aa', amused: '#dcfce7',
+    concerned: '#dbeafe', confident: '#dcfce7', hesitant: '#f3f4f6'
+  };
+  return map[emotion] || '#f3f4f6';
+}
+
+function getEmotionColor(emotion) {
+  const map = {
+    happy: '#166534', sad: '#1e40af', angry: '#991b1b', neutral: '#4b5563',
+    sarcastic: '#92400e', urgent: '#991b1b', skeptical: '#5b21b6', excited: '#9d174d',
+    calm: '#155e75', confused: '#92400e', frustrated: '#c2410c', amused: '#166534',
+    concerned: '#1e40af', confident: '#166534', hesitant: '#4b5563'
+  };
+  return map[emotion] || '#4b5563';
+}
+
+function updateSpeakerCount() {
+  const count = Object.keys(speakers).length;
+  document.getElementById('speakerCount').textContent = `${count} speaker${count !== 1 ? 's' : ''}`;
+}
+
+function showError(msg) {
+  document.getElementById('errorText').textContent = msg;
+  document.getElementById('errorToast').style.display = 'block';
+  setTimeout(hideError, 8000);
+}
+
+function hideError() {
+  document.getElementById('errorToast').style.display = 'none';
+}
+
+function showToast(msg) {
+  const toast = document.getElementById('errorToast');
+  document.getElementById('errorText').textContent = msg;
+  toast.className = toast.className.replace('bg-red-50 border-red-200', 'bg-green-50 border-green-200');
+  toast.style.display = 'block';
+  setTimeout(() => {
+    toast.style.display = 'none';
+    toast.className = toast.className.replace('bg-green-50 border-green-200', 'bg-red-50 border-red-200');
+  }, 3000);
+}
+
+// ===== Init =====
+loadState();
+
+// If we had captions from a previous session, show a resume option
+if (captions.length > 0) {
+  const onboarding = document.getElementById('onboarding');
+  const resumeHint = document.createElement('button');
+  resumeHint.className = 'text-sm text-brand-500 font-medium mt-4 underline';
+  resumeHint.textContent = `📝 Resume previous session (${captions.length} captions)`;
+  resumeHint.onclick = startListening;
+  onboarding.appendChild(resumeHint);
+}
+</script>
+</body>
+</html>
